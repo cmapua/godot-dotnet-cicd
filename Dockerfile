@@ -1,6 +1,10 @@
-FROM ubuntu:24.04 AS godot-base
 ARG VERSION="4.5.1"
 ARG DOTNET_VERSION="8.0"
+ARG BLENDER_VERSION="4.5.5"
+
+FROM ubuntu:24.04 AS godot-base
+ARG VERSION \
+    DOTNET_VERSION
 
 # Install dependencies
 # - ca-certificates for wget
@@ -13,7 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     dotnet-sdk-${DOTNET_VERSION} \
     ca-certificates \
-    && update-ca-certificates
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV GODOT_VERSION=$VERSION
 ENV GODOT_HOME="/usr/local/bin"
@@ -38,15 +43,24 @@ RUN echo ${PATH}
 # Run Godot at least once
 RUN godot -v -e --quit --headless
 
-FROM godot-base AS godot-blender
-ARG VERSION="4.5.1"
-ARG BLENDER_VERSION="4.5.5"
+FROM godot-base AS godot-blender-apt
+ARG BLENDER_VERSION
 
 # Download and install Blender (latest from APT)
 # numpy required for exporting
 RUN apt-get update && apt-get install -y --no-install-recommends \
     blender \
-    python3-numpy
+    python3-numpy \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Blender path in Godot editor settings
+RUN GODOT_MAJOR_MINOR="${GODOT_VERSION%.*}" && \
+    GODOT_EDITOR_SETTINGS="/root/.config/godot/editor_settings-${GODOT_MAJOR_MINOR}.tres" && \
+    BLENDER_PATH="/usr/bin/blender" && \
+    sed -i  "/^filesystem\/import\/blender\/blender_path = \"\"$/c\filesystem/import/blender/blender_path = \"${BLENDER_PATH}\"" ${GODOT_EDITOR_SETTINGS}
+
+FROM godot-base AS godot-blender-official
+ARG BLENDER_VERSION
 
 # Install display drivers? (Blender)
 # RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -60,22 +74,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Download and install Blender
 # sample URL: https://download.blender.org/release/Blender4.5/blender-4.5.5-linux-x64.tar.xz
-# RUN BLENDER_MAJOR_MINOR="${BLENDER_VERSION%.*}" \
-#     && echo "Blender major-minor version: $BLENDER_MAJOR_MINOR" \
-#     && wget https://download.blender.org/release/Blender$BLENDER_MAJOR_MINOR/blender-${BLENDER_VERSION}-linux-x64.tar.xz -P /tmp \
-#     && tar -xf /tmp/blender-${BLENDER_VERSION}-linux-x64.tar.xz -C /usr/local/bin \
-#     && rm /tmp/blender-${BLENDER_VERSION}-linux-x64.tar.xz
+RUN BLENDER_MAJOR_MINOR="${BLENDER_VERSION%.*}" \
+    && echo "Blender major-minor version: $BLENDER_MAJOR_MINOR" \
+    && wget https://download.blender.org/release/Blender${BLENDER_MAJOR_MINOR}/blender-${BLENDER_VERSION}-linux-x64.tar.xz -P /tmp \
+    && tar -xf /tmp/blender-${BLENDER_VERSION}-linux-x64.tar.xz -C /usr/local/bin \
+    && rm /tmp/blender-${BLENDER_VERSION}-linux-x64.tar.xz
 
-# Set blender path in godot editor settings
-# filesystem/import/blender/blender_path = ""
-RUN GODOT_MAJOR_MINOR="${VERSION%.*}" && \
-    echo "Godot major-minor version: $GODOT_MAJOR_MINOR" && \
+# Set Blender path in Godot editor settings
+RUN GODOT_MAJOR_MINOR="${GODOT_VERSION%.*}" && \
     GODOT_EDITOR_SETTINGS="/root/.config/godot/editor_settings-${GODOT_MAJOR_MINOR}.tres" && \
-    #BLENDER_PATH="/usr/local/bin/blender-${BLENDER_VERSION}-linux-x64/blender"
-    BLENDER_PATH="/usr/bin/blender" && \
-    sed -i  "/^filesystem\/import\/blender\/blender_path = \"\"$/c\filesystem/import/blender/blender_path = \"$BLENDER_PATH\"" $GODOT_EDITOR_SETTINGS
+    BLENDER_PATH="/usr/local/bin/blender-${BLENDER_VERSION}-linux-x64/blender" && \
+    sed -i  "/^filesystem\/import\/blender\/blender_path = \"\"$/c\filesystem/import/blender/blender_path = \"${BLENDER_PATH}\"" ${GODOT_EDITOR_SETTINGS}
 
-FROM godot-blender AS godot-export
+FROM godot-blender-apt AS godot-export
 
 # Get Godot export templates.
 RUN wget -q https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_mono_export_templates.tpz \
